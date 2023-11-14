@@ -1,5 +1,6 @@
 #### PART 0: INFORMATION --------
 # Written by Alice Wang, ID 1080579, in fufilment of BINF*6210 Assignment 2 on the use of ND1 sequence data on frog (Order: Anura)
+# Edited by Justin Carpani
 
 #### PART 1: PACKAGES ------
 #Installing (if not previously installed, remove #) and loading all relevant libraries.
@@ -20,6 +21,7 @@ library(caTools)
 library(caret)
 #install.packages("MLmetrics")
 library(MLmetrics)
+library(ggplot2)
 
 ##FUNCTIONS 
 #pie of genus' to be represented in classifier after various steps of filtering 
@@ -37,6 +39,13 @@ make_importance_plot <- function(RF_model) {
        xaxt = "n")
   axis(1, at = (1:(length(RF_model$importance))), labels = rownames(RF_model$importance),tck = 0, cex.axis = 0.6, las = 2)
 }
+
+  # creating a function to make classifiers for 3-mers with a variable number of trees
+randomForest <- function(Ntree){
+  output <<- randomForest::randomForest(x = predictor_tri,
+                          y = df$Genus_Name,
+                          ntree = Ntree)}
+
 
 #### PART 2: RETRIVING INFORMATION ----- 
 #ND1 is positioned within the Anura mitochondrial genome from position 2935 - 3897 which corresponds to a gene length of 963bp as per DOI: 10.7717/peerj.7532
@@ -56,32 +65,9 @@ ids_batch <- split(ND1_Ann$ids, ceiling(seq_along(ND1_Ann$ids)/sz_batch))
 #establish a vector to contain IDs after batching is complete !
 Ann_ids <- vector(mode = "character", 0)
 
-#loop through each batch to identify and store the IDs and append it to the Ann_ids vector
-j = 1
-while (j <= length(ids_batch)) {
-  ND1_Ann_working <- entrez_summary(db = "nuccore", id = ids_batch[[j]])
-  ids_working <- extract_from_esummary(ND1_Ann_working, "uid")
-  Ann_ids <- c(Ann_ids, ids_working)
-  j = j + 1
-}
-
-# separate entries into groups of100
-ids_batch <- split(Ann_ids, ceiling(seq_along(Ann_ids)/sz_batch))
-
-#create vector to contain sequences following batchin'
-Ann_seq <- vector(mode = "character", 0) 
-
-#loop through each chunk of IDs to retrieve sequence data for each and store it into the Ann_Seq vector
-j = 1
-while (j<= length(ids_batch)) {
-  seq_working <- entrez_fetch(db = "nuccore", id = ids_batch[[j]], rettype = "fasta")
-  Ann_seq <- c(Ann_seq, seq_working)
-  j = j+1
-}
-
-#make file w sequences and make the delimitter a new line instead of default
-write(Ann_seq, "ann_seq.fasta", sep = "\n")
-
+#rather than spliting into smaller chucks, if we use rettype = "fasta" we will return only the IDs and fasta files. A new vector is made called ‘ND1_fetch’.  
+system.time(ND1_fetch <- entrez_fetch(db = "nuccore", rettype = "fasta", web_history = ND1_Ann$web_history))
+write(ND1_fetch, "ND1.fasta", sep = "\n")
 
 #### PART THREE: QUALITY CHECKS AND FILTERING --------
 #create a dataframe of sequences in string sets (sg set)
@@ -119,6 +105,12 @@ n_genuss <- df_ND1_Ann %>%
   summarise(count=n())
 View(n_genuss)
 #table copy to move to doc/excel: write.table(n_genuss, "clipboard", sep="\t", row.names=FALSE)
+
+  # examine genera names and see if any are not representative of genera
+unique(df_ND1_Ann$Genus_Name) 
+  # remove the samples where the genus name was selected as UNVERIFIED
+df_ND1_Ann <- df_ND1_Ann[!grepl("UNVERIFIED:", df_ND1_Ann$Genus_Name),]
+
 
 #remove genera which are not represented well. Keep only genera that occur over 100 times.
 gen_tokeep <- subset (n_genuss, count > 100)
@@ -250,6 +242,49 @@ RF_clsfr <- randomForest(x = predictor_tri,
                          y = df$Genus_Name,
                          ntree =25)
 RF_clsfr
+
+
+  # iterating through values of ntree in the function randomForest and outputting the error rates to a dataframe 
+Ntree <- 25
+randomForest(Ntree)
+OutOriginal <- data.frame(output$err.rate)
+
+Ntree <- 200
+randomForest(Ntree)
+OutOne <- data.frame(output$err.rate)
+
+Ntree <- 400
+randomForest(Ntree)
+OutTwo <- data.frame(output$err.rate)
+
+Ntree <- 600
+randomForest(Ntree)
+OutThree <- data.frame(output$err.rate)
+
+Ntree <- 800
+randomForest(Ntree)
+OutFour <- data.frame(output$err.rate)
+
+  # making a dataframe of the mean error rates for each classifier
+dfsum <- data.frame(colMeans(OutOriginal), colMeans(OutOne), colMeans(OutTwo), colMeans(OutThree), colMeans(OutFour))
+
+  # taking only the Out-Of-Bag error rates for this analysis and adding column names
+dfOOB <- dfsum[1,]
+colnames(dfOOB) <- c(25, 200, 400, 600, 800)
+
+  # gathering to the correct format
+OOB <- gather(dfOOB)
+  # making the number of trees a numeric column
+OOB$key <- as.numeric(OOB$key)
+
+  # Making a scatterplot showing the OOB error rate as a percentage against nTree
+OOB %>% 
+  ggplot(aes(x = key, y = (value*100))) +
+  geom_point(size=3) +
+  xlab("Number of Trees") +
+  ylab("Out of Bag Error Rate (%)")
+
+
 #testing the 3-mer classifier
 y_pd <- predict(RF_clsfr, newdata = tst[-1])
 mx_confusion <- confusionMatrix(y_pd, reference = tst[,1])
